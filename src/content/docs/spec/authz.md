@@ -132,6 +132,8 @@ export class ProjectsController {
 | エンドポイント | メソッド | 必要ロール |
 |---|---|---|
 | `/api/auth/login` | POST | (認証不要) |
+| `/api/auth/forgot-password` | POST | (認証不要) |
+| `/api/auth/reset-password` | POST | (認証不要) |
 | `/api/dashboard` | GET | 全ロール |
 | `/api/projects` | GET | member, pm, tenant_admin |
 | `/api/projects` | POST | pm, tenant_admin |
@@ -244,3 +246,34 @@ interface JwtPayload {
 ### IT Admin のテナント横断範囲
 
 **決定**: Phase 1 では IT Admin は **自テナントの管理操作のみ**。テナント横断はPhase 2で検討。
+
+---
+
+## レート制限（`@nestjs/throttler`）
+
+API 保護のために `@nestjs/throttler` でグローバルレート制限を適用。
+
+### グローバル設定（3段階）
+
+```typescript
+// app.module.ts
+ThrottlerModule.forRoot([
+  { name: 'short',  ttl: 1000,   limit: 3  },   // 1秒に3回
+  { name: 'medium', ttl: 10000,  limit: 20 },   // 10秒に20回
+  { name: 'long',   ttl: 60000,  limit: 100 },  // 1分に100回
+])
+```
+
+### エンドポイント個別設定
+
+| エンドポイント | レート制限 | 理由 |
+|---|---|---|
+| `POST /api/auth/login` | 5回/分 (`@Throttle({ short: { limit: 5, ttl: 60000 } })`) | ブルートフォース攻撃防止 |
+| `POST /api/auth/forgot-password` | 3回/分 (`@Throttle({ short: { limit: 3, ttl: 60000 } })`) | メールスパム防止 |
+| `GET /api/health` | 制限なし (`@SkipThrottle()`) | ヘルスチェックは常時応答 |
+| その他全エンドポイント | グローバル設定に準拠 | — |
+
+### エラーレスポンス
+
+レート制限超過時は `429 Too Many Requests` を返却。
+Angular 側では「しばらくお待ちください」メッセージを表示。

@@ -33,17 +33,17 @@ graph TB
 | レベル | ツール | 対象 | 実行速度 | ROI |
 |---|---|---|---|---|
 | **静的解析** | ESLint + TypeScript | 全コード | ⚡ 即時 | ★★★★★ |
-| **ユニットテスト** | Vitest | 関数・サービス | 🚀 高速 | ★★★★ |
-| **統合テスト** | Vitest + TestingModule | モジュール結合 | 🏃 中速 | ★★★★★ |
+| **ユニットテスト** | Jest + @swc/jest (API) / Vitest (Web) | 関数・サービス | 🚀 高速 | ★★★★ |
+| **統合テスト** | Jest + TestingModule (API) / Vitest (Web) | モジュール結合 | 🏃 中速 | ★★★★★ |
 | **E2E テスト** | Playwright | ユーザーフロー | 🐢 低速 | ★★★ |
 
 ## カバレッジ目標
 
 | メトリクス | 目標値 | 計測ツール |
 |---|---|---|
-| **Line Coverage** | ≥ 80% | Vitest `--coverage` |
-| **Branch Coverage** | ≥ 75% | Vitest `--coverage` |
-| **Function Coverage** | ≥ 85% | Vitest `--coverage` |
+| **Line Coverage** | ≥ 80% | Vitest `--coverage` (Web) / Jest `--coverage` (API) |
+| **Branch Coverage** | ≥ 75% | Vitest `--coverage` (Web) / Jest `--coverage` (API) |
+| **Function Coverage** | ≥ 85% | Vitest `--coverage` (Web) / Jest `--coverage` (API) |
 | **E2E Scenario Coverage** | 主要フロー 100% | Playwright Report |
 
 ### カバレッジ除外対象

@@ -235,17 +235,17 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
 
 ### ErrorInterceptor
 
-HTTP エラーの統一ハンドリング。
+HTTP エラーの統一ハンドリング。PrimeNG の `MessageService` (ToastService 経由) でエラー通知を表示。
 
 ```typescript
 // core/interceptors/error.interceptor.ts
 import { HttpInterceptorFn, HttpErrorResponse } from '@angular/common/http';
 import { inject } from '@angular/core';
-import { MatSnackBar } from '@angular/material/snack-bar';
+import { MessageService } from 'primeng/api';
 import { catchError, throwError } from 'rxjs';
 
 export const errorInterceptor: HttpInterceptorFn = (req, next) => {
-  const snackBar = inject(MatSnackBar);
+  const messageService = inject(MessageService);
 
   return next(req).pipe(
     catchError((error: HttpErrorResponse) => {
@@ -256,9 +256,11 @@ export const errorInterceptor: HttpInterceptorFn = (req, next) => {
         ?? error.error?.message
         ?? 'サーバーエラーが発生しました';
 
-      snackBar.open(message, '閉じる', {
-        duration: 5000,
-        panelClass: error.status >= 500 ? ['error-snackbar'] : ['warn-snackbar'],
+      messageService.add({
+        severity: error.status >= 500 ? 'error' : 'warn',
+        summary: 'エラー',
+        detail: message,
+        life: 5000,
       });
 
       return throwError(() => error);
@@ -374,21 +376,29 @@ export class TenantService {
 
 ## app.config.ts
 
-Angular アプリケーションの設定。
+Angular アプリケーションの設定。PrimeNG の Aura テーマと各種グローバルサービスを登録。
 
 ```typescript
 // apps/web/src/app/app.config.ts
-import { ApplicationConfig, provideZoneChangeDetection } from '@angular/core';
+import { ApplicationConfig, ErrorHandler, provideZoneChangeDetection } from '@angular/core';
 import { provideRouter, withComponentInputBinding } from '@angular/router';
 import {
-  provideHttpClient, withInterceptors, withFetch,
+    provideHttpClient, withInterceptors, withFetch,
 } from '@angular/common/http';
 import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
-import { MAT_DATE_LOCALE } from '@angular/material/core';
+import { registerLocaleData } from '@angular/common';
+import ja from '@angular/common/locales/ja';
+
+import { providePrimeNG } from 'primeng/config';
+import { MessageService, ConfirmationService } from 'primeng/api';
+import Aura from '@primeuix/themes/aura';
 
 import { APP_ROUTES } from './app.routes';
 import { authInterceptor } from './core/interceptors/auth.interceptor';
 import { errorInterceptor } from './core/interceptors/error.interceptor';
+import { GlobalErrorHandler } from './core/services/global-error-handler';
+
+registerLocaleData(ja);
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -399,7 +409,17 @@ export const appConfig: ApplicationConfig = {
       withInterceptors([authInterceptor, errorInterceptor]),
     ),
     provideAnimationsAsync(),
-    { provide: MAT_DATE_LOCALE, useValue: 'ja-JP' },
+    providePrimeNG({
+      theme: {
+        preset: Aura,
+        options: {
+          darkModeSelector: '.dark',
+        },
+      },
+    }),
+    MessageService,
+    ConfirmationService,
+    { provide: ErrorHandler, useClass: GlobalErrorHandler },
   ],
 };
 ```
@@ -422,6 +442,16 @@ export const APP_ROUTES: Routes = [
     path: 'login',
     loadComponent: () =>
       import('./core/auth/login/login.component').then((m) => m.LoginComponent),
+  },
+  {
+    path: 'forgot-password',
+    loadComponent: () =>
+      import('./core/auth/forgot-password/forgot-password.component').then((m) => m.ForgotPasswordComponent),
+  },
+  {
+    path: 'reset-password',
+    loadComponent: () =>
+      import('./core/auth/reset-password/reset-password.component').then((m) => m.ResetPasswordComponent),
   },
 
   // ─── Protected ───
@@ -464,6 +494,11 @@ export const APP_ROUTES: Routes = [
           import('./features/invoices/invoices.routes').then((m) => m.INVOICE_ROUTES),
       },
       {
+        path: 'notifications',
+        loadChildren: () =>
+          import('./features/notifications/notifications.routes').then((m) => m.NOTIFICATION_ROUTES),
+      },
+      {
         path: 'search',
         loadChildren: () =>
           import('./features/search/search.routes').then((m) => m.SEARCH_ROUTES),
@@ -487,7 +522,7 @@ export const APP_ROUTES: Routes = [
 
 ## AppShell Component
 
-サイドバー + ヘッダー + `<router-outlet>` のレイアウトシェル。
+PrimeNG Drawer + Menu + `<router-outlet>` のレイアウトシェル。
 
 ```typescript
 // shared/components/app-shell.component.ts
@@ -496,66 +531,61 @@ export const APP_ROUTES: Routes = [
   standalone: true,
   imports: [
     RouterOutlet, RouterLink, RouterLinkActive,
-    MatSidenavModule, MatToolbarModule, MatListModule,
-    MatIconModule, MatButtonModule, MatBadgeModule,
-    NotificationBellComponent,
+    DrawerModule, MenuModule, AvatarModule,
+    ButtonModule, ToastModule, ConfirmDialogModule,
+    BreadcrumbComponent, NotificationBellComponent,
   ],
   template: `
-    <mat-sidenav-container class="app-container">
-      <mat-sidenav mode="side" [opened]="true" class="app-sidenav">
-        <mat-toolbar color="primary">OpsHub</mat-toolbar>
-        <mat-nav-list>
-          @for (item of menuItems(); track item.path) {
-            <a mat-list-item
-               [routerLink]="item.path"
-               routerLinkActive="active">
-              <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-              <span matListItemTitle>{{ item.label }}</span>
-            </a>
-          }
-        </mat-nav-list>
-      </mat-sidenav>
+    <p-toast />
+    <p-confirmdialog />
 
-      <mat-sidenav-content>
-        <mat-toolbar>
-          <span class="spacer"></span>
+    <p-drawer [visible]="true" [modal]="false" styleClass="app-sidenav">
+      <ng-template pTemplate="header">
+        <span class="font-bold text-xl">OpsHub</span>
+      </ng-template>
+      <p-menu [model]="menuItems()" styleClass="w-full border-0" />
+    </p-drawer>
+
+    <div class="app-content">
+      <header class="app-header">
+        <app-breadcrumb />
+        <div class="header-actions">
           <app-notification-bell />
-          <button mat-icon-button [matMenuTriggerFor]="userMenu">
-            <mat-icon>account_circle</mat-icon>
-          </button>
-          <mat-menu #userMenu="matMenu">
-            <button mat-menu-item (click)="auth.logout()">
-              <mat-icon>exit_to_app</mat-icon>
-              ログアウト
-            </button>
-          </mat-menu>
-        </mat-toolbar>
+          <p-avatar icon="pi pi-user" shape="circle"
+                    (click)="userMenuRef.toggle($event)" />
+          <p-menu #userMenuRef [model]="userMenuItems" [popup]="true" />
+        </div>
+      </header>
 
-        <main class="content">
-          <router-outlet />
-        </main>
-      </mat-sidenav-content>
-    </mat-sidenav-container>
+      <main class="content">
+        <router-outlet />
+      </main>
+    </div>
   `,
 })
 export class AppShellComponent {
   auth = inject(AuthService);
 
-  /** ロールに応じたメニュー項目 */
+  userMenuItems = [
+    { label: 'ログアウト', icon: 'pi pi-sign-out', command: () => this.auth.logout() },
+  ];
+
+  /** ロールに応じたメニュー項目 (PrimeNG MenuItem 形式) */
   menuItems = computed(() => {
     const items = [
-      { path: '/dashboard',  icon: 'dashboard',   label: 'ダッシュボード', roles: ['*'] },
-      { path: '/workflows',  icon: 'description',  label: '申請',          roles: ['*'] },
-      { path: '/projects',   icon: 'folder',       label: 'プロジェクト',  roles: ['*'] },
-      { path: '/timesheets', icon: 'schedule',      label: '工数',          roles: ['member', 'pm'] },
-      { path: '/expenses',   icon: 'payments',      label: '経費',          roles: ['*'] },
-      { path: '/invoices',   icon: 'receipt',       label: '請求書',        roles: ['accounting', 'pm', 'tenant_admin'] },
-      { path: '/search',     icon: 'search',        label: '検索',          roles: ['*'] },
-      { path: '/admin',      icon: 'settings',      label: '管理',          roles: ['tenant_admin', 'it_admin'] },
+      { path: '/dashboard',   icon: 'pi pi-home',       label: 'ダッシュボード', roles: ['*'] },
+      { path: '/workflows',   icon: 'pi pi-file',       label: '申請',          roles: ['*'] },
+      { path: '/projects',    icon: 'pi pi-folder',     label: 'プロジェクト',  roles: ['*'] },
+      { path: '/timesheets',  icon: 'pi pi-clock',      label: '工数',          roles: ['member', 'pm'] },
+      { path: '/expenses',    icon: 'pi pi-wallet',     label: '経費',          roles: ['*'] },
+      { path: '/invoices',    icon: 'pi pi-receipt',    label: '請求書',        roles: ['accounting', 'pm', 'tenant_admin'] },
+      { path: '/notifications', icon: 'pi pi-bell',     label: '通知',          roles: ['*'] },
+      { path: '/search',      icon: 'pi pi-search',     label: '検索',          roles: ['*'] },
+      { path: '/admin',       icon: 'pi pi-cog',        label: '管理',          roles: ['tenant_admin', 'it_admin'] },
     ];
-    return items.filter((item) =>
-      item.roles.includes('*') || item.roles.some((r) => this.auth.hasRole(r)),
-    );
+    return items
+      .filter((item) => item.roles.includes('*') || item.roles.some((r) => this.auth.hasRole(r)))
+      .map((item) => ({ label: item.label, icon: item.icon, routerLink: item.path }));
   });
 }
 ```
@@ -615,54 +645,33 @@ export class HighlightPipe implements PipeTransform {
 
 ---
 
-## ConfirmDialogComponent
+## 確認ダイアログ (PrimeNG ConfirmationService)
 
-汎用確認ダイアログ。削除操作等で共通使用。
+削除操作等の確認ダイアログは PrimeNG の `ConfirmationService` を使用。`<p-confirmdialog>` は AppShell に配置済み。
 
 ```typescript
-// shared/components/confirm-dialog.component.ts
-import { Component, inject } from '@angular/core';
-import { MAT_DIALOG_DATA, MatDialogRef, MatDialogModule } from '@angular/material/dialog';
-import { MatButtonModule } from '@angular/material/button';
+// 使用例 (任意のコンポーネント)
+import { inject } from '@angular/core';
+import { ConfirmationService } from 'primeng/api';
 
-export interface ConfirmDialogData {
-  title: string;
-  message: string;
-  confirmText?: string;    // default: '確認'
-  cancelText?: string;     // default: 'キャンセル'
-  color?: 'primary' | 'warn';  // default: 'warn'
-}
+export class ProjectDetailComponent {
+  private confirmationService = inject(ConfirmationService);
 
-@Component({
-  selector: 'app-confirm-dialog',
-  standalone: true,
-  imports: [MatDialogModule, MatButtonModule],
-  template: `
-    <h2 mat-dialog-title>{{ data.title }}</h2>
-    <mat-dialog-content>{{ data.message }}</mat-dialog-content>
-    <mat-dialog-actions align="end">
-      <button mat-button mat-dialog-close>
-        {{ data.cancelText ?? 'キャンセル' }}
-      </button>
-      <button mat-raised-button
-              [color]="data.color ?? 'warn'"
-              [mat-dialog-close]="true">
-        {{ data.confirmText ?? '確認' }}
-      </button>
-    </mat-dialog-actions>
-  `,
-})
-export class ConfirmDialogComponent {
-  data = inject<ConfirmDialogData>(MAT_DIALOG_DATA);
+  deleteProject(id: string): void {
+    this.confirmationService.confirm({
+      message: 'このプロジェクトを削除しますか？',
+      header: '削除確認',
+      icon: 'pi pi-exclamation-triangle',
+      acceptLabel: '削除',
+      rejectLabel: 'キャンセル',
+      accept: () => {
+        // 削除処理
+      },
+    });
+  }
 }
 ```
 
-**使用例**:
-```typescript
-const dialogRef = this.dialog.open(ConfirmDialogComponent, {
-  data: { title: '削除確認', message: 'このプロジェクトを削除しますか？' },
-});
-dialogRef.afterClosed().subscribe((confirmed) => {
-  if (confirmed) this.deleteProject();
-});
-```
+> [!NOTE]
+> 旧 `ConfirmDialogComponent` (Angular Material ベース) は削除済み。
+> `PrimeNG ConfirmationService` に完全移行しています。

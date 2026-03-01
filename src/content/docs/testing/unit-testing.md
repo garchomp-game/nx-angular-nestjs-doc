@@ -7,6 +7,11 @@ description: Vitest によるAngular コンポーネント・NestJS サービス
 
 ユニットテストは **個別の関数・クラスを分離してテスト** します。外部依存はモックに置き換え、ロジックの正しさのみを検証します。
 
+> [!NOTE] テストフレームワークの使い分け
+> - **API (NestJS)**: `jest` + `@swc/jest` — NestJS 公式が Jest を採用、SWC トランスフォーマーで高速化
+> - **Web (Angular)**: `vitest` + `@analogjs/vitest-angular` — Angular 21 公式推奨
+> - **共有ライブラリ**: `vitest`
+
 ## Vitest 設定
 
 ### ワークスペース設定
@@ -16,7 +21,7 @@ description: Vitest によるAngular コンポーネント・NestJS サービス
 import { defineWorkspace } from 'vitest/config';
 
 export default defineWorkspace([
-  // Angular フロントエンド
+  // Angular フロントエンド (Vitest)
   {
     extends: 'apps/web/vite.config.ts',
     test: {
@@ -30,19 +35,7 @@ export default defineWorkspace([
       },
     },
   },
-  // NestJS バックエンド
-  {
-    test: {
-      name: 'api',
-      environment: 'node',
-      include: ['apps/api/src/**/*.spec.ts'],
-      coverage: {
-        provider: 'v8',
-        reportsDirectory: 'coverage/apps/api',
-      },
-    },
-  },
-  // 共有ライブラリ
+  // 共有ライブラリ (Vitest)
   {
     test: {
       name: 'shared',
@@ -55,6 +48,10 @@ export default defineWorkspace([
   },
 ]);
 ```
+
+> [!IMPORTANT] API のテストは Jest
+> NestJS API (`apps/api`) のテストは `jest` + `@swc/jest` で実行されます。
+> 設定は `apps/api/jest.config.ts` に定義されています。
 
 ### Angular テストセットアップ
 

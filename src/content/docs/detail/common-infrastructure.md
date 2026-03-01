@@ -343,33 +343,24 @@ export class ResponseInterceptor<T> implements NestInterceptor<T, any> {
 }
 ```
 
-### LoggingInterceptor
+### LoggingInterceptor（nestjs-pino で代替済み）
 
-リクエスト/レスポンスのログ出力（開発環境用）。
-
-```typescript
-// common/interceptors/logging.interceptor.ts
-import { CallHandler, ExecutionContext, Injectable, Logger, NestInterceptor } from '@nestjs/common';
-import { Observable, tap } from 'rxjs';
-
-@Injectable()
-export class LoggingInterceptor implements NestInterceptor {
-  private readonly logger = new Logger('HTTP');
-
-  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
-    const request = context.switchToHttp().getRequest();
-    const { method, url } = request;
-    const now = Date.now();
-
-    return next.handle().pipe(
-      tap(() => {
-        const response = context.switchToHttp().getResponse();
-        this.logger.log(`${method} ${url} ${response.statusCode} - ${Date.now() - now}ms`);
-      }),
-    );
-  }
-}
-```
+> [!NOTE]
+> 現在は `nestjs-pino` (`LoggerModule`) が HTTP リクエストログを自動記録するため、
+> 手動の `LoggingInterceptor` は不要です。`main.ts` の Global Interceptors からも削除済み。
+>
+> ```typescript
+> // app.module.ts での設定
+> LoggerModule.forRoot({
+>   pinoHttp: {
+>     autoLogging: true,
+>     transport: process.env['NODE_ENV'] !== 'production'
+>       ? { target: 'pino-pretty', options: { colorize: true, singleLine: true } }
+>       : undefined,
+>     level: process.env['LOG_LEVEL'] ?? 'info',
+>   },
+> }),
+> ```
 
 ---
 
@@ -475,16 +466,20 @@ app.useGlobalPipes(
 ```typescript
 // apps/api/src/main.ts
 import { NestFactory } from '@nestjs/core';
-import { Logger, ValidationPipe } from '@nestjs/common';
-import { AppModule } from './app.module';
+import { ValidationPipe } from '@nestjs/common';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { Logger } from 'nestjs-pino';
+import { AppModule } from './app/app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
-import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+
+  // nestjs-pino が NestJS 内部のロガーを置き換え
+  app.useLogger(app.get(Logger));
 
   // Global prefix
   app.setGlobalPrefix('api');
@@ -509,17 +504,28 @@ async function bootstrap() {
   app.useGlobalFilters(new HttpExceptionFilter());
 
   // Global interceptors (順序重要: 上から順に実行)
-  const reflector = app.get('Reflector');
+  // ※ nestjs-pino が HTTP リクエストログを自動記録するため LoggingInterceptor は不要
   app.useGlobalInterceptors(
-    new LoggingInterceptor(),
     app.get(TenantInterceptor),
     app.get(AuditInterceptor),
     new ResponseInterceptor(),
   );
 
+  // Swagger (開発モードのみ)
+  if (process.env['NODE_ENV'] !== 'production') {
+    const config = new DocumentBuilder()
+      .setTitle('OpsHub API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const doc = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, doc);
+  }
+
   const port = process.env['PORT'] ?? 3000;
   await app.listen(port);
-  Logger.log(`🚀 API running on http://localhost:${port}/api`);
+  const logger = app.get(Logger);
+  logger.log(`🚀 API running on http://localhost:${port}/api`);
 }
 
 bootstrap();
@@ -530,56 +536,98 @@ bootstrap();
 ## AppModule 構成
 
 ```typescript
-// apps/api/src/app.module.ts
+// apps/api/src/app/app.module.ts
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { ConfigModule } from '@nestjs/config';
+import { LoggerModule } from 'nestjs-pino';
 import { PrismaModule } from '@prisma-db';
 
 // Auth
-import { AuthModule } from './modules/auth/auth.module';
-import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
-import { RolesGuard } from './common/guards/roles.guard';
+import { AuthModule } from '../modules/auth/auth.module';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 
-// Feature Modules (各モジュール開発時に追加)
-import { WorkflowsModule } from './modules/workflows/workflows.module';
-import { ProjectsModule } from './modules/projects/projects.module';
-import { TimesheetsModule } from './modules/timesheets/timesheets.module';
-import { ExpensesModule } from './modules/expenses/expenses.module';
-import { NotificationsModule } from './modules/notifications/notifications.module';
-import { DashboardModule } from './modules/dashboard/dashboard.module';
-import { AdminModule } from './modules/admin/admin.module';
-import { InvoicesModule } from './modules/invoices/invoices.module';
-import { DocumentsModule } from './modules/documents/documents.module';
-import { SearchModule } from './modules/search/search.module';
-import { HealthModule } from './modules/health/health.module';
+// Admin
+import { AdminModule } from '../modules/admin/admin.module';
+
+// Feature Modules
+import { TimesheetsModule } from '../modules/timesheets/timesheets.module';
+import { WorkflowsModule } from '../modules/workflows/workflows.module';
+import { NotificationsModule } from '../modules/notifications/notifications.module';
+import { ExpensesModule } from '../modules/expenses/expenses.module';
+import { ProjectsModule } from '../modules/projects/projects.module';
+import { InvoicesModule } from '../modules/invoices/invoices.module';
+import { SearchModule } from '../modules/search/search.module';
+import { DocumentsModule } from '../modules/documents/documents.module';
+import { DashboardModule } from '../modules/dashboard/dashboard.module';
+
+// Operations
+import { HealthModule } from '../modules/health/health.module';
+
+// Mail
+import { MailModule } from '../modules/mail/mail.module';
+
+// Interceptors (for DI)
+import { TenantInterceptor } from '../common/interceptors/tenant.interceptor';
+import { AuditInterceptor } from '../common/interceptors/audit.interceptor';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ThrottlerModule.forRoot([
+      {
+        name: 'short',
+        ttl: 1000,    // 1秒
+        limit: 3,     // 1秒あたり3リクエスト
+      },
+      {
+        name: 'medium',
+        ttl: 10000,   // 10秒
+        limit: 20,    // 10秒あたり20リクエスト
+      },
+      {
+        name: 'long',
+        ttl: 60000,   // 1分
+        limit: 100,   // 1分あたり100リクエスト
+      },
+    ]),
+    LoggerModule.forRoot({
+      pinoHttp: {
+        autoLogging: true,
+        transport: process.env['NODE_ENV'] !== 'production'
+          ? { target: 'pino-pretty', options: { colorize: true, singleLine: true } }
+          : undefined,
+        level: process.env['LOG_LEVEL'] ?? 'info',
+      },
+    }),
     PrismaModule,
     AuthModule,
-
-    // Feature Modules
-    WorkflowsModule,
-    ProjectsModule,
-    TimesheetsModule,
-    ExpensesModule,
-    NotificationsModule,
-    DashboardModule,
     AdminModule,
-    InvoicesModule,
-    DocumentsModule,
-    SearchModule,
     HealthModule,
+    TimesheetsModule,
+    WorkflowsModule,
+    NotificationsModule,
+    ExpensesModule,
+    ProjectsModule,
+    InvoicesModule,
+    SearchModule,
+    DocumentsModule,
+    DashboardModule,
+    MailModule,
   ],
   providers: [
     // Global Guards (全エンドポイントに適用)
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Interceptors registered as providers for DI in main.ts
+    TenantInterceptor,
+    AuditInterceptor,
   ],
 })
-export class AppModule {}
+export class AppModule { }
 ```
 
 > [!IMPORTANT] モジュール追加ルール
@@ -600,6 +648,10 @@ export class AppModule {}
 | `PORT` | — | `3000` | API ポート |
 | `CORS_ORIGIN` | — | `http://localhost:4200` | CORS 許可オリジン |
 | `NODE_ENV` | — | `development` | 環境識別 |
-| `LOG_LEVEL` | — | `log` | ログレベル (error/warn/log/debug/verbose) |
+| `LOG_LEVEL` | — | `info` | ログレベル (fatal/error/warn/info/debug/trace) |
 | `UPLOAD_DIR` | — | `./uploads` | ファイルアップロード先 |
 | `MAX_FILE_SIZE` | — | `10485760` | 最大ファイルサイズ (bytes) |
+| `MAIL_HOST` | — | `localhost` | SMTP ホスト |
+| `MAIL_PORT` | — | `1025` | SMTP ポート |
+| `MAIL_FROM` | — | `noreply@opshub.local` | 送信元メールアドレス |
+| `FRONTEND_URL` | — | `http://localhost:4200` | パスワードリセットリンク用 |

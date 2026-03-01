@@ -258,7 +258,6 @@ export function enforceAuditLogAppendOnly(
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../node_modules/.prisma/client"
 }
 
 datasource db {
@@ -269,11 +268,6 @@ datasource db {
 // モデル定義は detail/db.md を参照
 ```
 
-> [!NOTE] マルチ DB 対応
-> - 開発環境で SQLite を使用する場合は `provider = "sqlite"` に切替、ネイティブ型アノテーション (`@db.Decimal` 等) を除外した別 schema を用意する
-> - npm scripts: `prisma:generate:pg`, `prisma:generate:sqlite`
-
----
 
 ## シードデータ
 
@@ -358,4 +352,18 @@ main()
     }
   }
 }
+```
+
+---
+
+## マイグレーション構成
+
+開発環境では Docker Compose で PostgreSQL 16 を起動し、Prisma Migrate でスキーマ管理を行います。
+
+```bash
+# マイグレーション実行
+npx prisma migrate dev --schema=libs/prisma-db/prisma/schema.prisma
+
+# シードデータ投入
+npx prisma db seed
 ```

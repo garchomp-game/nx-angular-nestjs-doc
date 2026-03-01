@@ -11,15 +11,19 @@ description: プロジェクト実装済みの技術スタック一覧
 |---|---|---|---|
 | **モノレポ** | `nx` | `22.x` | タスクキャッシュ・Affected 対応 |
 | **フロントエンド** | `@angular/core` | `21.x` | Standalone Components / Signals |
-| **UI** | `@angular/material` | `21.x` | Angular に追従 |
-| **CDK** | `@angular/cdk` | `21.x` | Drag & Drop 等 |
+| **UI** | `primeng` | `21.x` | Aura テーマ (`@primeuix/themes`) |
+| **アイコン** | `primeicons` | `7.x` | `pi pi-xxx` 形式 |
 | **バックエンド** | `@nestjs/core` | `11.x` | SWC 統合 |
 | **ORM** | `prisma` | `6.x` | `$extends` ベース |
 | **ORM Client** | `@prisma/client` | `6.x` | Proxy 型 PrismaService |
 | **テスト (API)** | `jest` + `@swc/jest` | `30.x` / `0.2.x` | SWC トランスフォーマー (6x 高速) |
 | **テスト (Web)** | `vitest` | `4.x` | Angular 公式推奨 |
-| **E2E** | `@playwright/test` | — | Phase 2 導入予定 |
+| **E2E** | `@playwright/test` | `1.58.x` | Chromium / Firefox / Mobile |
 | **コンパイラ** | `@swc/core` | `1.x` | Jest + Webpack で使用 |
+| **ロガー** | `nestjs-pino` | `4.x` | 構造化 JSON ログ (pino-pretty 開発用) |
+| **API ドキュメント** | `@nestjs/swagger` | `11.x` | Swagger UI (`/api/docs` — 開発モードのみ) |
+| **バリデーション** | `class-validator` | `0.14.x` | ValidationPipe + DTO デコレータ |
+| **レート制限** | `@nestjs/throttler` | `6.x` | Global Guard (short/medium/long 3段構成) |
 | **Lint** | `eslint` | `9.x` | Flat Config |
 | **Formatter** | `prettier` | `3.x` | — |
 | **言語** | `typescript` | `5.9.x` | — |
@@ -78,17 +82,22 @@ graph LR
     ANG --> TS["TypeScript 5.9"]
     NEST --> TS
     TS --> NODE["Node.js 22 LTS"]
+    ANG --> PRIME["PrimeNG 21"]
     NEST --> PRISMA["Prisma 6"]
     NEST --> SWC["SWC"]
+    NEST --> PINO["nestjs-pino"]
+    NEST --> SWAGGER["@nestjs/swagger"]
+    NEST --> THROTTLE["@nestjs/throttler"]
     SWC --> JEST["Jest + @swc/jest"]
     SWC --> WP["Webpack (swc compiler)"]
-    PRISMA --> PG["PostgreSQL"]
+    PRISMA --> PG["PostgreSQL 16"]
     ANG --> VITEST["Vitest 4"]
     ANG --> PW["Playwright"]
 
     style NX fill:#012c5e,color:#fff
     style ANG fill:#dd3333,color:#fff
     style NEST fill:#e0234e,color:#fff
+    style PRIME fill:#41b883,color:#fff
     style PRISMA fill:#2d3748,color:#fff
     style TS fill:#3178c6,color:#fff
     style SWC fill:#f5a623,color:#000

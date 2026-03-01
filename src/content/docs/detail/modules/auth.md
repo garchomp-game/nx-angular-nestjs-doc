@@ -1,11 +1,11 @@
 ---
 title: 認証モジュール設計 (AuthModule)
-description: Passport.js JWT 認証の NestJS Module + Angular Core Auth 設計（新規作成）
+description: Passport.js JWT 認証の NestJS Module + Angular Core Auth 設計（パスワードリセット機能含む）
 ---
 
 ## 概要
 
-- **責務**: ユーザー認証（ログイン・登録・トークン更新・ログアウト）、JWT ベースのセッション管理
+- **責務**: ユーザー認証（ログイン・登録・トークン更新・ログアウト）、JWT ベースのセッション管理、パスワードリセット
 - **Epic**: 新規（旧 Supabase Auth からの移行）
 - **Prisma Models**: `User`（新規追加）, `Profile`
 
@@ -37,7 +37,8 @@ apps/api/src/modules/auth/
 ├── dto/
 │   ├── login.dto.ts
 │   ├── register.dto.ts
-│   └── refresh-token.dto.ts
+│   ├── refresh-token.dto.ts
+│   └── password-reset.dto.ts
 ├── types/
 │   └── auth.types.ts
 └── tests/
@@ -54,6 +55,8 @@ apps/api/src/modules/auth/
 | `POST` | `/api/auth/refresh` | アクセストークン更新（refresh token 使用） | なし（`@Public()`） |
 | `POST` | `/api/auth/logout` | ログアウト（refresh token 無効化） | 認証済み |
 | `GET` | `/api/auth/me` | 現在のユーザー情報取得 | 認証済み |
+| `POST` | `/api/auth/forgot-password` | パスワードリセットメール送信 | なし（`@Public()`） |
+| `POST` | `/api/auth/reset-password` | パスワードリセット実行 | なし（`@Public()`） |
 
 ### Service メソッド
 
@@ -65,6 +68,8 @@ apps/api/src/modules/auth/
 | `refreshTokens` | `userId, refreshToken` | `TokenPair` | リフレッシュトークンで新しいトークンペア発行 |
 | `logout` | `userId` | `void` | リフレッシュトークン無効化 |
 | `getProfile` | `userId` | `AuthUser` | 現在のユーザー情報（ロール含む） |
+| `forgotPassword` | `email: string` | `void` | リセットトークン生成 + MailService 経由でメール送信 |
+| `resetPassword` | `token: string, newPassword: string` | `void` | トークン検証 + パスワード更新 + トークンクリア |
 
 ### Passport Strategy
 
@@ -197,6 +202,25 @@ export class RefreshTokenDto {
   @IsNotEmpty()
   refreshToken: string;
 }
+
+// password-reset.dto.ts
+export class ForgotPasswordDto {
+  @IsNotEmpty({ message: 'メールアドレスは必須です' })
+  @IsEmail({}, { message: 'メールアドレスの形式が正しくありません' })
+  email: string;
+}
+
+export class ResetPasswordDto {
+  @IsNotEmpty({ message: 'トークンは必須です' })
+  @IsString()
+  token: string;
+
+  @IsNotEmpty({ message: 'パスワードは必須です' })
+  @IsString()
+  @MinLength(8, { message: 'パスワードは8文字以上である必要があります' })
+  @Matches(/^(?=.*[a-zA-Z])(?=.*\d)/, { message: 'パスワードは英字と数字の両方を含む必要があります' })
+  newPassword: string;
+}
 ```
 
 ### @Public() デコレータ
@@ -268,6 +292,10 @@ apps/web/src/app/core/auth/
 ├── register/
 │   ├── register.component.ts
 │   └── register.component.html
+├── forgot-password/
+│   └── forgot-password.component.ts
+├── reset-password/
+│   └── reset-password.component.ts
 └── types/
     └── auth.types.ts
 ```
@@ -278,6 +306,8 @@ apps/web/src/app/core/auth/
 |---|---|---|
 | `LoginComponent` | Smart | ログインフォーム（email + password） |
 | `RegisterComponent` | Smart | ユーザー登録フォーム |
+| `ForgotPasswordComponent` | Smart | パスワードリセット申請フォーム（PrimeNG Card + InputText + Button） |
+| `ResetPasswordComponent` | Smart | 新パスワード設定フォーム（PrimeNG Card + Password + Button） |
 
 ### AuthService (Angular)
 
@@ -301,6 +331,8 @@ export class AuthService {
   logout(): void { ... }
   refreshToken(): Observable<TokenPair> { ... }
   getAccessToken(): string | null { ... }
+  forgotPassword(email: string): Observable<void> { ... }
+  resetPassword(token: string, newPassword: string): Observable<void> { ... }
 
   private loadFromStorage(): void { ... }
   private storeTokens(tokens: TokenPair): void { ... }
@@ -364,6 +396,8 @@ export const authGuard: CanActivateFn = () => {
 export const APP_ROUTES: Routes = [
   { path: 'login', component: LoginComponent },
   { path: 'register', component: RegisterComponent },
+  { path: 'forgot-password', component: ForgotPasswordComponent },
+  { path: 'reset-password', component: ResetPasswordComponent },
   {
     path: '',
     canActivate: [authGuard],
@@ -398,7 +432,42 @@ export const APP_ROUTES: Routes = [
 
 ## 依存関係
 
-- **NestJS 内**: `PrismaModule`（DB アクセス）、`@nestjs/passport`、`@nestjs/jwt`
+- **NestJS 内**: `PrismaModule`（DB アクセス）、`@nestjs/passport`、`@nestjs/jwt`、`MailModule`（パスワードリセットメール送信）
 - **共有ライブラリ**: `libs/shared/types`（`AuthUser`, `TokenPair` 型）
-- **外部依存**: `passport`, `passport-jwt`, `passport-local`, `bcrypt`
-- **Angular**: `@angular/common/http`（`HttpInterceptorFn`）、Angular Signals
+- **外部依存**: `passport`, `passport-jwt`, `passport-local`, `bcrypt`, `crypto`
+- **Angular**: `@angular/common/http`（`HttpInterceptorFn`）、Angular Signals、PrimeNG（`Card`, `InputText`, `Password`, `Button`, `Message`）
+
+---
+
+## パスワードリセット機能詳細
+
+### DB フィールド
+
+`User` モデルに以下のフィールドを追加:
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `resetToken` | `String?` | SHA-256 ハッシュ済みリセットトークン |
+| `resetTokenExpiresAt` | `DateTime?` | トークン有効期限（1時間） |
+
+### MailService 連携
+
+```typescript
+// modules/mail/mail.service.ts
+@Injectable()
+export class MailService {
+  async sendPasswordResetEmail(email: string, rawToken: string): Promise<void> {
+    const resetUrl = `${this.frontendUrl}/reset-password?token=${rawToken}`;
+    // メール送信ロジック
+  }
+}
+```
+
+### セキュリティ設計
+
+- **トークン生成**: `crypto.randomBytes(32)` で十分なエントロピーを確保
+- **保存形式**: SHA-256 ハッシュで DB に保存（生トークンは保存しない）
+- **有効期限**: 1時間
+- **タイミング攻撃対策**: メールが存在しなくても同じレスポンスを返す
+- **レート制限**: `@Throttle({ short: { limit: 3, ttl: 60000 } })` で 1分に3回まで
+- **トークン消費**: リセット完了後に `resetToken` / `resetTokenExpiresAt` を `null` にクリア

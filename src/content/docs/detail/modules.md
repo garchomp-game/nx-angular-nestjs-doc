@@ -659,7 +659,7 @@ const name = workflow.createdBy?.displayName ?? workflow.createdById;
 |---|---|---|---|
 | `ROLE_LABELS` | `Record<Role, string>` | `constants/role-labels.ts` | ロール表示名（`member` → `"メンバー"` 等） |
 | `USER_STATUS_LABELS` | `Record<UserStatus, string>` | `constants/status-labels.ts` | ユーザーステータス表示名 |
-| `USER_STATUS_COLORS` | `Record<UserStatus, string>` | `constants/status-labels.ts` | ステータスごとの Ant Design カラー名 |
+| `USER_STATUS_COLORS` | `Record<UserStatus, string>` | `constants/status-labels.ts` | ステータスごとの PrimeNG severity / CSS カスタムプロパティ |
 
 #### 状態遷移ルール
 
@@ -748,12 +748,12 @@ export class WorkflowListComponent {
   selector: 'app-workflow-card',
   standalone: true,
   template: `
-    <nz-card [nzTitle]="workflow().title">
+    <p-card [header]="workflow().title">
       <p>{{ workflow().status }}</p>
       @if (canApprove()) {
-        <button nz-button (click)="approve.emit(workflow().id)">承認</button>
+        <p-button (click)="approve.emit(workflow().id)">承認</p-button>
       }
-    </nz-card>
+    </p-card>
   `,
 })
 export class WorkflowCardComponent {
@@ -880,20 +880,22 @@ export class DashboardService {
 
 ### DD-MOD-005 通知モジュール
 
-- **責務**: 通知の表示・既読管理・一括既読
+- **責務**: 通知の表示・既読管理・一括既読・削除
 - **Epic**: [Epic G: 通知](../../requirements/req-catalog/#req-g01-通知)
 - **API (NestJS)**:
   - `modules/notifications/notifications.controller.ts` — 通知 REST
-  - `modules/notifications/notifications.service.ts` — 通知作成・既読更新
+  - `modules/notifications/notifications.service.ts` — 通知作成・既読更新・削除
   - `modules/notifications/notifications.gateway.ts` — WebSocket（将来）
 - **UI (Angular)**:
-  - `features/notifications/notification-bell.component.ts` — ヘッダー通知ベル
-  - `features/notifications/notification.service.ts`
+  - `shared/notification-bell/notification-bell.component.ts` — ヘッダー通知ベル
+  - `features/notifications/notification-list.component.ts` — 通知一覧ページ
+  - `shared/notification-bell/notification.service.ts`
 - **公開 API**:
   - `GET   /api/notifications` — `getNotifications`
   - `PATCH /api/notifications/:id/read` — `markAsRead`
   - `PATCH /api/notifications/read-all` — `markAllAsRead`
   - `GET   /api/notifications/unread-count` — `getUnreadCount`
+  - `DELETE /api/notifications/:id` — `removeNotification`
 - **認可**: `@UseGuards(JwtAuthGuard)` のみ（RLS 相当の tenant フィルタは Service で実装）
 - **データ境界**: `Notification` テーブル
 
@@ -1033,28 +1035,34 @@ export class DashboardService {
   ```
 - **依存**: `@nestjs/terminus`, `PrismaService`
 
-### DD-MOD-012 認証モジュール（新規）
+### DD-MOD-012 認証モジュール
 
-- **責務**: JWT 認証、ログイン/ログアウト、OAuth コールバック、セッション管理
+- **責務**: JWT 認証、ログイン/ログアウト、パスワードリセット、セッション管理
 - **API (NestJS)**:
   - `modules/auth/auth.module.ts` — PassportModule 統合
-  - `modules/auth/auth.controller.ts` — ログイン / OAuth コールバック
-  - `modules/auth/auth.service.ts` — JWT 発行・検証
+  - `modules/auth/auth.controller.ts` — ログイン / パスワードリセット
+  - `modules/auth/auth.service.ts` — JWT 発行・検証・パスワードリセット
   - `modules/auth/strategies/jwt.strategy.ts` — JWT ペイロード → `CurrentUser`
   - `modules/auth/strategies/local.strategy.ts` — メールパスワード認証
   - `modules/auth/guards/jwt-auth.guard.ts` — 認証 Guard
   - `modules/auth/guards/roles.guard.ts` — ロール Guard
   - `modules/auth/decorators/roles.decorator.ts` — `@Roles()`
   - `modules/auth/decorators/current-user.decorator.ts` — `@CurrentUser()`
+  - `modules/auth/dto/password-reset.dto.ts` — `ForgotPasswordDto` / `ResetPasswordDto`
 - **UI (Angular)**:
-  - `core/services/auth.service.ts` — AuthState Signal, `hasRole()`
+  - `core/services/auth.service.ts` — AuthState Signal, `hasRole()`, `forgotPassword()`, `resetPassword()`
   - `core/guards/auth.guard.ts` — `canActivate` ルートガード
   - `core/interceptors/auth.interceptor.ts` — `Authorization: Bearer` 自動付与
+  - `core/auth/forgot-password/forgot-password.component.ts` — パスワードリセット申請
+  - `core/auth/reset-password/reset-password.component.ts` — 新パスワード設定
 - **公開 API**:
   - `POST /api/auth/login` — ログイン（JWT 発行）
   - `POST /api/auth/logout` — ログアウト
-  - `GET  /api/auth/callback` — OAuth コールバック
+  - `POST /api/auth/register` — ユーザー登録
+  - `POST /api/auth/refresh` — トークン更新
   - `GET  /api/auth/me` — 現在のユーザー情報
+  - `POST /api/auth/forgot-password` — パスワードリセットメール送信
+  - `POST /api/auth/reset-password` — パスワードリセット実行
 - **`CurrentUser` 型** (`libs/shared/types`):
   ```ts
   interface CurrentUser {
@@ -1068,6 +1076,7 @@ export class DashboardService {
   - 未認証 → `401 Unauthorized`
   - 権限不足 → `403 Forbidden`（`RolesGuard`）
 - **データ境界**: `User`, `UserRole`, `Profile` テーブル
+- **依存**: `MailModule`（パスワードリセットメール）、`@nestjs/throttler`（レート制限）
 
 ---
 
@@ -1088,7 +1097,7 @@ export class DashboardService {
 | 項目 | 決定内容 |
 |---|---|
 | 型共有 | `libs/shared/types/` で DTO・Enum・Interface を Frontend/Backend で共有 |
-| UI ライブラリ | NG-ZORRO (Ant Design for Angular) に統一、共通定数は `libs/shared/types/constants/` に集約 |
+| UI ライブラリ | PrimeNG に統一、共通定数は `libs/shared/types/constants/` に集約 |
 | モノレポ | Nx ワークスペースで `apps/web` (Angular) + `apps/api` (NestJS) + `libs/` 構成 |
 | WF 採番 | `prisma.$queryRaw` + `FOR UPDATE` ロックによる並行安全な採番（Service メソッド内） |
 | 請求書採番 | 同上（`InvoicesService.nextInvoiceNumber()`） |

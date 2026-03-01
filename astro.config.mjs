@@ -122,10 +122,12 @@ export default defineConfig({
                 },
                 {
                     label: '📋 計画',
-                    collapsed: true,
                     items: [
                         { label: 'Phase 2 計画', link: '/plans/phase-2-plan/' },
                         { label: '開発チケット計画', link: '/plans/dev-tickets/' },
+                        { label: 'Phase 7-8 作業ログ', link: '/plans/phase-7-8-log/' },
+                        { label: 'ネクストアクション', link: '/plans/next-actions/' },
+                        { label: 'Lint レポート分析', link: '/plans/lint-report-analysis/' },
                     ],
                 },
             ],

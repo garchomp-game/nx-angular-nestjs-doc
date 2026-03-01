@@ -314,6 +314,115 @@ class ChangeUserStatusDto {
 
 ---
 
+## API-A03: 認証
+
+**NestJS Controller**: `AuthController`
+**Module**: `AuthModule`
+
+### エンドポイント一覧
+
+| Method | Path | 説明 | ロール | レスポンス |
+|---|---|---|---|---|
+| POST | `/api/auth/login` | ログイン（JWT 発行） | なし（`@Public()`） | 200: TokenPair |
+| POST | `/api/auth/register` | ユーザー登録 | なし（`@Public()`） | 201: TokenPair |
+| POST | `/api/auth/refresh` | アクセストークン更新 | なし（`@Public()`） | 200: TokenPair |
+| POST | `/api/auth/logout` | ログアウト | 認証済み | 200 |
+| GET | `/api/auth/me` | 現在のユーザー情報取得 | 認証済み | 200: AuthUser |
+| POST | `/api/auth/forgot-password` | パスワードリセットメール送信 | なし（`@Public()`） | 200 |
+| POST | `/api/auth/reset-password` | パスワードリセット実行 | なし（`@Public()`） | 200 |
+
+### レート制限
+
+| エンドポイント | 制限 |
+|---|---|
+| `POST /api/auth/login` | `@Throttle({ short: { limit: 5, ttl: 60000 } })` — 1分に5回 |
+| `POST /api/auth/forgot-password` | `@Throttle({ short: { limit: 3, ttl: 60000 } })` — 1分に3回 |
+
+### リクエスト DTO
+
+```typescript
+// forgot-password
+class ForgotPasswordDto {
+  @IsNotEmpty({ message: 'メールアドレスは必須です' })
+  @IsEmail({}, { message: 'メールアドレスの形式が正しくありません' })
+  email: string;
+}
+
+// reset-password
+class ResetPasswordDto {
+  @IsNotEmpty({ message: 'トークンは必須です' })
+  @IsString()
+  token: string;
+
+  @IsNotEmpty({ message: 'パスワードは必須です' })
+  @IsString()
+  @MinLength(8, { message: 'パスワードは8文字以上である必要があります' })
+  @Matches(/^(?=.*[a-zA-Z])(?=.*\d)/, { message: 'パスワードは英字と数字の両方を含む必要があります' })
+  newPassword: string;
+}
+```
+
+### パスワードリセットフロー
+
+```mermaid
+sequenceDiagram
+    participant U as ユーザー
+    participant Web as Angular App
+    participant API as NestJS API
+    participant DB as Database
+    participant Mail as MailService
+
+    U->>Web: 「パスワードを忘れた」クリック
+    Web->>API: POST /api/auth/forgot-password { email }
+    API->>DB: User 検索（email）
+    alt ユーザー存在
+        API->>API: crypto.randomBytes(32) → rawToken
+        API->>API: SHA-256 ハッシュ → hashedToken
+        API->>DB: resetToken, resetTokenExpiresAt 保存（1時間有効）
+        API->>Mail: パスワードリセットメール送信（rawToken）
+    end
+    API-->>Web: 200 OK（存在有無に関わらず同じレスポンス）
+
+    U->>Web: メールのリンクからリセット画面へ
+    Web->>API: POST /api/auth/reset-password { token, newPassword }
+    API->>API: SHA-256(token) → hashedToken
+    API->>DB: resetToken + 期限チェック
+    alt トークン有効
+        API->>DB: パスワード更新 + resetToken クリア
+        API-->>Web: 200 OK
+    else トークン無効/期限切れ
+        API-->>Web: 400 ERR-AUTH-010
+    end
+```
+
+### レスポンス例
+
+```json
+// POST /api/auth/forgot-password
+{ "message": "パスワードリセットメールを送信しました（登録済みの場合）" }
+
+// POST /api/auth/reset-password
+{ "message": "パスワードが正常にリセットされました" }
+```
+
+### エラーコード
+
+| HTTP | コード | 条件 |
+|---|---|---|
+| 400 | `ERR-AUTH-010` | リセットトークンが無効または期限切れ |
+| 401 | `ERR-AUTH-001` | ログイン認証失敗 / リフレッシュトークン無効 |
+| 409 | `ERR-AUTH-004` | メールアドレスが既に登録済み（register 時） |
+| 429 | — | レート制限超過 |
+
+### 監査ログ
+
+| 操作 | action | resourceType |
+|---|---|---|
+| パスワードリセット要求 | `auth.forgot_password` | `user` |
+| パスワードリセット完了 | `auth.reset_password` | `user` |
+
+---
+
 ## API-B01〜B03: ワークフロー（申請）管理
 
 **NestJS Controller**: `WorkflowsController`
@@ -330,6 +439,10 @@ class ChangeUserStatusDto {
 | POST | `/api/workflows/:id/approve` | 承認 | approver, tenant_admin | 200: Workflow |
 | POST | `/api/workflows/:id/reject` | 差戻し | approver, tenant_admin | 200: Workflow |
 | POST | `/api/workflows/:id/withdraw` | 取下げ | 作成者のみ | 200: Workflow |
+| POST | `/api/workflows/:id/attachments` | 添付ファイルアップロード | member 以上 | 201: WorkflowAttachment |
+| GET | `/api/workflows/:id/attachments` | 添付ファイル一覧取得 | member 以上 | 200: WorkflowAttachment[] |
+| DELETE | `/api/workflows/:id/attachments/:attachmentId` | 添付ファイル削除 | アップロード者/tenant_admin | 204 |
+| GET | `/api/workflows/:id/attachments/:attachmentId/download` | 添付ファイルダウンロード | member 以上 | 200: StreamableFile |
 
 ### リクエスト DTO
 
@@ -1155,10 +1268,11 @@ class ExpenseSummaryQueryDto {
 
 | Method | Path | 説明 | ロール | レスポンス |
 |---|---|---|---|---|
-| GET | `/api/notifications` | 通知一覧取得（最新20件） | 全ロール(自分のみ) | 200: Notification[] |
+| GET | `/api/notifications` | 通知一覧取得（ページネーション対応） | 全ロール(自分のみ) | 200: Notification[] |
 | GET | `/api/notifications/unread-count` | 未読件数取得 | 全ロール(自分のみ) | 200: { count: number } |
 | PATCH | `/api/notifications/:id/read` | 個別既読 | 全ロール(自分のみ) | 204 |
 | PATCH | `/api/notifications/read-all` | 一括既読 | 全ロール(自分のみ) | 204 |
+| DELETE | `/api/notifications/:id` | 通知削除 | 全ロール(自分のみ) | 204 |
 
 ### リクエスト DTO
 

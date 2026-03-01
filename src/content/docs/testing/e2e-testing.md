@@ -12,7 +12,7 @@ graph LR
     PW["Playwright<br/>テストランナー"] -->|ブラウザ操作| BROWSER["Chrome/Firefox"]
     BROWSER -->|HTTP| ANGULAR["Angular App"]
     ANGULAR -->|API Call| NESTJS["NestJS API"]
-    NESTJS -->|Query| DB[(SQLite)]
+    NESTJS -->|Query| DB[(PostgreSQL)]
 
     style PW fill:#2ebc4f,color:#fff
     style ANGULAR fill:#dd3333,color:#fff
@@ -24,7 +24,7 @@ graph LR
 ### インストール
 
 ```bash
-pnpm add -D @playwright/test@1.49
+pnpm add -D @playwright/test@1.58
 npx playwright install chromium
 ```
 

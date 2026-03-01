@@ -38,6 +38,10 @@ apps/api/src/modules/workflow/
 | `POST` | `/api/workflows/:id/approve` | 承認（submitted → approved） | `approver`, `tenant_admin` |
 | `POST` | `/api/workflows/:id/reject` | 差戻し（submitted → rejected） | `approver`, `tenant_admin` |
 | `POST` | `/api/workflows/:id/withdraw` | 取下げ（submitted → withdrawn） | `member` 以上（本人のみ） |
+| `POST` | `/api/workflows/:id/attachments` | 添付ファイルアップロード | `member` 以上 |
+| `GET` | `/api/workflows/:id/attachments` | 添付ファイル一覧取得 | `member` 以上 |
+| `DELETE` | `/api/workflows/:id/attachments/:attachmentId` | 添付ファイル削除 | アップロード者 / `tenant_admin` |
+| `GET` | `/api/workflows/:id/attachments/:attachmentId/download` | 添付ファイルダウンロード | `member` 以上 |
 
 ### Service メソッド
 
@@ -53,6 +57,10 @@ apps/api/src/modules/workflow/
 | `reject(tenantId, id, approverId, reason)` | テナントID, WF ID, 承認者ID, 理由 | `Workflow` | 差戻し + 通知作成 |
 | `withdraw(tenantId, id, userId)` | テナントID, WF ID, ユーザーID | `Workflow` | 取下げ処理 |
 | `generateWorkflowNumber(tenantId)` | テナントID | `string` | WF番号の並行安全な採番（`WF-001` 形式） |
+| `uploadAttachment(tenantId, id, file, userId)` | テナントID, WF ID, ファイル, ユーザーID | `WorkflowAttachment` | 添付ファイル保存 + DB レコード作成 |
+| `getAttachments(tenantId, id)` | テナントID, WF ID | `WorkflowAttachment[]` | 添付ファイル一覧取得 |
+| `deleteAttachment(tenantId, id, attachmentId, userId)` | テナントID, WF ID, 添付ID, ユーザーID | `void` | 添付ファイル削除（ファイル + DB） |
+| `getAttachmentFile(tenantId, id, attachmentId)` | テナントID, WF ID, 添付ID | `WorkflowAttachment` | ダウンロード用ファイル情報取得 |
 
 > [!NOTE] WF 採番ロジック
 > 旧 `next_workflow_number()` RPC は `WorkflowService.generateWorkflowNumber()` に移行。
@@ -142,7 +150,66 @@ apps/web/src/app/features/workflows/
 | `approve(id)` | `POST` | `/api/workflows/:id/approve` | 承認 |
 | `reject(id, reason)` | `POST` | `/api/workflows/:id/reject` | 差戻し |
 | `withdraw(id)` | `POST` | `/api/workflows/:id/withdraw` | 取下げ |
+| `uploadAttachment(id, file)` | `POST` | `/api/workflows/:id/attachments` | 添付ファイルアップロード |
+| `getAttachments(id)` | `GET` | `/api/workflows/:id/attachments` | 添付ファイル一覧取得 |
+| `deleteAttachment(id, attachmentId)` | `DELETE` | `/api/workflows/:id/attachments/:attachmentId` | 添付ファイル削除 |
+| `downloadAttachment(id, attachmentId)` | `GET` | `/api/workflows/:id/attachments/:attachmentId/download` | ダウンロード |
+
+## 添付ファイル機能
+
+### multer 設定
+
+```typescript
+// workflows.controller.ts
+const UPLOAD_DIR = join(process.cwd(), 'uploads', 'workflow-attachments');
+
+@UseInterceptors(FileInterceptor('file', {
+  storage: diskStorage({
+    destination: UPLOAD_DIR,
+    filename: (_req, file, cb) => {
+      const uniqueName = `${randomUUID()}${extname(file.originalname)}`;
+      cb(null, uniqueName);
+    },
+  }),
+  limits: { fileSize: MAX_FILE_SIZE_BYTES },
+  fileFilter: (_req, file, cb) => {
+    if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new BadRequestException({
+        code: 'ERR-WF-ATT-001',
+        message: `許可されていないファイル形式です: ${file.mimetype}`,
+      }), false);
+    }
+  },
+}))
+```
+
+### 許可 MIME タイプ
+
+`ALLOWED_MIME_TYPES` および `MAX_FILE_SIZE_BYTES` は `libs/shared/types/constants/allowed-mime-types.ts` で定義。
+
+### Angular UI（PrimeNG FileUpload）
+
+`WorkflowDetailComponent` 内に添付ファイルセクションを追加:
+
+| PrimeNG | 用途 |
+|---|---|
+| `FileUpload` | ファイルアップロード UI |
+| `Button` | ダウンロード/削除ボタン |
+| `Table` | 添付ファイル一覧表示 |
+| `ConfirmDialog` | 削除確認 |
+
+### エラーコード
+
+| HTTP | コード | 条件 |
+|---|---|---|
+| 400 | `ERR-WF-ATT-001` | 許可されていないファイル形式 |
+| 400 | `ERR-WF-ATT-002` | ファイル未指定 |
+
+---
 
 ## 依存関係
-- **NestJS内**: `NotificationModule`（承認/差戻し/提出時の通知作成）、`AuditLogService`（変更操作の監査ログ記録）
-- **共有ライブラリ**: `libs/shared/types`（`WorkflowStatus`, `WorkflowType` enum）、`libs/shared/constants`（`WORKFLOW_TRANSITIONS` 状態遷移ルール）
+- **NestJS内**: `NotificationModule`（承認/差戻し/提出時の通知作成）、`AuditLogService`（変更操作の監査ログ記録）、`@nestjs/platform-express`（multer）
+- **共有ライブラリ**: `libs/shared/types`（`WorkflowStatus`, `WorkflowType` enum）、`libs/shared/constants`（`WORKFLOW_TRANSITIONS`、`ALLOWED_MIME_TYPES`、`MAX_FILE_SIZE_BYTES`）
+- **Angular UI**: PrimeNG（`FileUpload`, `Table`, `Button`, `ConfirmDialog`）

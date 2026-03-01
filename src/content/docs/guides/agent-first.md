@@ -79,6 +79,21 @@ libs/shared/types/src/lib/dto/
 | Spec | `{target}.spec.ts` | `projects.service.spec.ts` |
 | E2E | `{feature}.e2e.ts` | `projects.e2e.ts` |
 
+### UI コンポーネント規約
+
+UI は **PrimeNG 21 (Aura テーマ)** を直接使用します。共有 UI ラッパーコンポーネントは使用しません。
+
+| カテゴリ | PrimeNG コンポーネント |
+|---|---|
+| テーブル | `Table` + `Paginator` |
+| フォーム入力 | `InputText` / `InputNumber` / `Select` / `DatePicker` / `Password` |
+| ボタン | `Button` |
+| ダイアログ | `ConfirmDialog` (`ConfirmationService`) |
+| トースト | `Toast` (`MessageService` via `ToastService`) |
+| タグ/バッジ | `Tag` |
+| カード | `Card` |
+| アイコン | PrimeIcons (`pi pi-xxx`) |
+
 ### クラス / 関数命名
 
 ```typescript
@@ -218,13 +233,30 @@ graph TB
 ## コードジェネレータ活用
 
 ```bash
-# エージェントが使いやすいジェネレータ
+# ── エージェントが使いやすいジェネレータ
 nx g @nx/nest:resource --name=expenses --project=api
 # → controller, service, module, dto, spec を一括生成
 
 nx g @nx/angular:component --name=expense-list --project=web --standalone
 # → component, spec, template, styles を一括生成
 ```
+
+### エージェント共通指示
+
+```
+// turbo-all
+1. 対象ファイルのみ変更すること
+2. 既存ロジック (Signal, Service, Router) は変更禁止
+3. PrimeNG コンポーネントを直接使用。shared/services のサービスのみ利用可
+4. PrimeIcons (pi pi-xxx) を使用
+5. 日本語 UI を維持
+6. data-testid 属性を主要要素に付与
+7. 完了後 pnpm nx build web && pnpm nx test web で確認
+```
+
+> [!TIP] `// turbo-all` アノテーション
+> ワークフロー内の全ステップで `run_command` ツールの `SafeToAutoRun` を `true` に設定し、
+> エージェントがコマンドを自動実行できるようにします。
 
 ## エージェント開発フロー
 

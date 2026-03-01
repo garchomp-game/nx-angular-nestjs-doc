@@ -3,20 +3,21 @@ title: Guard / Middleware 設計
 description: RLS に代わる NestJS Guards と Prisma Middleware によるデータ保護設計
 ---
 
-## 1. 概要: 3層認可モデル
+## 1. 概要: 4層認可モデル
 
-OpsHub では [権限と認可](../../spec/authz/) で定義した通り、NestJS の Guard と Prisma Middleware を組み合わせた3層のデータ保護モデルを採用しています。
+OpsHub では [権限と認可](../../spec/authz/) で定義した通り、NestJS の Guard と Prisma `$extends` を組み合わせた4層のデータ保護モデルを採用しています。
 本ドキュメントでは、旧アーキテクチャの RLS (Row Level Security) から NestJS 仕様への詳細な移行設計を定義します。
 
 | RLS パターン | NestJS 相当 |
 |---|---|
-| `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` | Prisma Middleware (`tenant_id` 自動フィルタ) |
+| `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` | Prisma `$extends` (`tenant_id` 自動フィルタ) |
 | `CREATE POLICY ... FOR SELECT` | `@UseGuards(JwtAuthGuard, RolesGuard)` + `@Roles()` |
 | `WHERE tenant_id IN (SELECT ...)` | `TenantMiddleware` が自動付与 |
 | `WHERE created_by = auth.uid()` | Service 層で `userId` フィルタ |
 | `WITH CHECK (...)` | `class-validator` DTO + Service バリデーション |
-| `INSERT ONLY (audit_logs)` | `AuditLogMiddleware` で UPDATE/DELETE を拒否 |
+| `INSERT ONLY (audit_logs)` | `enforceAuditLogAppendOnly` (`$extends`) + DB RULE |
 | `service_role bypass` | Admin API は `@SkipTenantCheck()` デコレータ |
+| (なし) | `ThrottlerGuard` — DDoS/ブルートフォース対策 |
 
 ---
 
@@ -200,4 +201,41 @@ export class ProjectsController {
     return this.projectsService.findAllWithoutTenant();
   }
 }
+```
+
+---
+
+## 7. ThrottlerGuard（レート制限）
+
+`@nestjs/throttler` を `APP_GUARD` としてグローバル登録し、DDoS およびブルートフォース攻撃を防止します。
+
+### グローバル設定（3段構成）
+
+| 名前 | TTL | 制限 | 説明 |
+|---|---|---|---|
+| `short` | 1秒 | 3リクエスト | 急激なバースト防止 |
+| `medium` | 10秒 | 20リクエスト | 通常過負荷防止 |
+| `long` | 1分 | 100リクエスト | 持続的な高負荷防止 |
+
+### 認証エンドポイントの追加制限
+
+```typescript
+// ログイン・パスワードリセットにはより厳しい制限を適用
+@Throttle([{ name: 'short', ttl: 60000, limit: 5 }])
+@Post('login')
+async login(@Body() dto: LoginDto) { ... }
+
+@Throttle([{ name: 'short', ttl: 60000, limit: 3 }])
+@Post('forgot-password')
+async forgotPassword(@Body() dto: ForgotPasswordDto) { ... }
+```
+
+### ヘルスチェックの除外
+
+```typescript
+// ヘルスチェックはレート制限から除外
+@SkipThrottle()
+@Public()
+@Get('health')
+healthCheck() { ... }
 ```

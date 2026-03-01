@@ -17,6 +17,8 @@ description: OpsHub の全画面とURL・ロール・対応REQのマッピング
 |---|---|---|---|---|---|
 | 01 | ログイン | `/login` | 全員 | — | Must |
 | 02 | ダッシュボード | `/dashboard` | 全員 | REQ-G03 | Must |
+| 20 | パスワードリセット申請 | `/forgot-password` | 全員（未認証） | — | Must |
+| 21 | 新パスワード設定 | `/reset-password` | 全員（未認証） | — | Must |
 
 ## Epic A: テナント/組織/権限
 
@@ -69,8 +71,7 @@ description: OpsHub の全画面とURL・ロール・対応REQのマッピング
 | # | 画面名 | Angular Route | 対象ロール | REQ | 優先度 |
 |---|---|---|---|---|---|
 | 19 | 検索結果 | `/search` | 全員 | REQ-G02 | Could |
-
-> **通知**: ヘッダー内の `NotificationBellComponent` として実装。独立画面なし。
+| 22 | 通知一覧 | `/notifications` | 全員 | REQ-G01 | Must |
 
 ---
 
@@ -80,6 +81,8 @@ description: OpsHub の全画面とURL・ロール・対応REQのマッピング
 // apps/web/src/app/app.routes.ts
 export const routes: Routes = [
   { path: 'login', component: LoginComponent },
+  { path: 'forgot-password', component: ForgotPasswordComponent },
+  { path: 'reset-password', component: ResetPasswordComponent },
   {
     path: '',
     component: AuthenticatedLayoutComponent,
@@ -109,6 +112,10 @@ export const routes: Routes = [
         canActivate: [rolesGuard(['accounting', 'pm', 'tenant_admin'])],
       },
       {
+        path: 'notifications',
+        loadChildren: () => import('./features/notifications/notifications.routes'),
+      },
+      {
         path: 'search',
         component: SearchResultsComponent,
       },
@@ -124,4 +131,4 @@ export const routes: Routes = [
 
 ## 画面設計の対象
 
-Must画面（13画面）を優先的に詳細化する。Should/Could 画面は概要レベル。
+Must画面（16画面）を優先的に詳細化する。Should/Could 画面は概要レベル。
